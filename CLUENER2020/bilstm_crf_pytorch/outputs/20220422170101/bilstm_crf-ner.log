@@ -1,0 +1,17 @@
+Loading features from cached file dataset/cluener/cached_crf-train_bilstm_crf_ner
+Loading features from cached file dataset/cluener/cached_crf-dev_bilstm_crf_ner
+
+Epoch: 1 -  loss: 26.1284 - eval_loss: 22.0384 - eval_acc: 0.4548 - eval_recall: 0.3223 - eval_f1: 0.3772 
+
+Epoch 1: eval_f1 improved from 0 to 0.37721470756334546
+save model to disk.
+Subject: address - Acc: 0.2897 - Recall: 0.1126 - F1: 0.1622
+Subject: position - Acc: 0.704 - Recall: 0.4065 - F1: 0.5154
+Subject: name - Acc: 0.3453 - Recall: 0.2473 - F1: 0.2882
+Subject: company - Acc: 0.3917 - Recall: 0.373 - F1: 0.3821
+Subject: movie - Acc: 0.375 - Recall: 0.3974 - F1: 0.3859
+Subject: game - Acc: 0.563 - Recall: 0.6508 - F1: 0.6038
+Subject: organization - Acc: 0.4461 - Recall: 0.327 - F1: 0.3774
+Subject: scene - Acc: 0.4521 - Recall: 0.1579 - F1: 0.234
+Subject: government - Acc: 0.402 - Recall: 0.332 - F1: 0.3636
+Subject: book - Acc: 0.6905 - Recall: 0.1883 - F1: 0.2959
