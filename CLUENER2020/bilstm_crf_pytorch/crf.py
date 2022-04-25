@@ -94,6 +94,7 @@ class CRF(nn.Module):
         return best_scores, best_path, scores
 
     def _forward_alg(self, feats, lens_):
+        # # Do the forward algorithm to compute the partition function
         init_alphas = torch.FloatTensor(self.tagset_size).fill_(-10000.0)
         init_alphas[self.tag_dictionary[self.START_TAG]] = 0.0
 
@@ -131,6 +132,7 @@ class CRF(nn.Module):
         return alpha
 
     def _score_sentence(self, feats, tags, lens_):
+        # # Gives the score of a provided tag sequence
         start = torch.LongTensor([self.tag_dictionary[self.START_TAG]]).to(self.device)
         start = start[None, :].repeat(tags.shape[0], 1)
         stop = torch.LongTensor([self.tag_dictionary[self.STOP_TAG]]).to(self.device)
@@ -158,13 +160,29 @@ class CRF(nn.Module):
             all_tags.append([[id2label[score_id] for score_id, score in enumerate(score_dist)] for score_dist in scores])
         return tags, all_tags
 
+    # 调用时的语句：
+    # self.crf.calculate_loss(features, tag_list=input_tags, lengths=input_lens)
+    # 对编号为166的batch：
+    # features -> scores，维度torch.Size([64, 10, 33])，表示该批64个句子，每个句子包含10个词，每个词都有33个分类的值
+    # input_tags -> tag_list，维度torch.Size([64, 10]) ，表示该批64个句子，每个句子包含10个词对应的标注
+    # input_lens -> lengths，是[10, 10, ..., 10]，是一个包含64个整数10(即句子长度)的列表
     def calculate_loss(self, scores, tag_list,lengths):
         return self._calculate_loss_old(scores, lengths, tag_list)
 
+    # CRF代码实现细节见https://www.jianshu.com/p/566c6faace64
     def _calculate_loss_old(self, features, lengths, tags):
+        # forward_score为包含64个元素的一维tensor，每个元素对应一句话的loss计算的被减项
+        # gold_score为包含64个元素的一维tensor，每个元素对应一句话的loss计算的减项
+        # score为包含64个元素的一维tensor，每个元素对应一句话的loss计算结果
+        # _forward_alg() does the forward algorithm to compute the partition function
         forward_score = self._forward_alg(features, lengths)
+        # _score_sentence() gives the score of a provided tag sequence
         gold_score = self._score_sentence(features, tags, lengths)
+        # 输入序列X，输出序列y的分数s(X, y)，是由发射概率矩阵P和转移概率矩阵A共同决定的，相应概率越大则分数s(X, y)越高
+        # loss(也就是这里的score)定义为对yi(i=1, 2, ..., n)的分数求logsumexp，然后减去标签y*的分数，即forward_score - gold_score
+        # loss越小则代表标签y*的分数在所有yi分数和中占比越大，即输入序列X，输出序列y*的概率越大，即模型越好
         score = forward_score - gold_score
+        # 返回当前batch的平均score，作为当前batch的loss
         return score.mean()
 
 

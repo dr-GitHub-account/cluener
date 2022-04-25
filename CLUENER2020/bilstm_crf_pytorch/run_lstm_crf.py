@@ -58,66 +58,42 @@ def train(args,model,processor):
         # 开始遍历每个batch
         for step, batch in enumerate(train_loader):
             # class DatasetLoader的__getitem__(self, index)返回(input_ids, input_mask, label_ids, input_lens)
-            # 具体一个batch中，input_ids, input_mask, input_tags, input_lens见下面的输出
             input_ids, input_mask, input_tags, input_lens = batch
-            # if step == 1:
-            #     print('\n', 'input_ids', '\n', input_ids, '\n', np.shape(input_ids), '\n',
-            #           'input_mask', '\n', input_mask, '\n', np.shape(input_mask), '\n',
-            #           'input_tags', '\n', input_tags, '\n', np.shape(input_tags), '\n',
-            #           'input_lens', '\n', input_lens, '\n', np.shape(input_lens))
-            #     # input_ids 
-            #     # tensor([[  36,   14,   71,  ...,  215,   49,    5],
-            #     #         [ 373,   30,   79,  ...,  990,  433,    7],
-            #     #         [ 237,   28,    6,  ...,   76,  267,    7],
-            #     #         ...,
-            #     #         [ 189,  385,    6,  ...,  101,   32,  280],
-            #     #         [  93,  168,  583,  ...,  737,  515,    5],
-            #     #         [1783, 1811,  506,  ...,  106,  126,  280]]) 
-            #     # torch.Size([64, 50]) 
-            #     # input_mask 
-            #     # tensor([[1, 1, 1,  ..., 1, 1, 1],
-            #     #         [1, 1, 1,  ..., 1, 1, 1],
-            #     #         [1, 1, 1,  ..., 1, 1, 1],
-            #     #         ...,
-            #     #         [1, 1, 1,  ..., 1, 1, 1],
-            #     #         [1, 1, 1,  ..., 1, 1, 1],
-            #     #         [1, 1, 1,  ..., 1, 1, 1]]) 
-            #     # torch.Size([64, 50]) 
-            #     # input_tags 
-            #     # tensor([[ 0,  0,  0,  ...,  0,  0,  0],
-            #     #         [ 9, 19,  0,  ...,  0,  0,  0],
-            #     #         [ 0,  0,  0,  ...,  0,  0,  0],
-            #     #         ...,
-            #     #         [ 0,  0,  0,  ..., 15,  0,  0],
-            #     #         [ 0,  0,  0,  ...,  0,  0,  0],
-            #     #         [10, 20, 20,  ...,  0,  0,  0]]) 
-            #     # torch.Size([64, 50]) 
-            #     # input_lens 
-            #     # [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50] 
-            #     # (64,)
-            if step == 1:
-                print('\n', 'input_ids[0]', '\n', input_ids[0], '\n',
-                      'input_ids[1]', '\n', input_ids[1])
-                print('\n', 'input_tags[0]', '\n', input_tags[0], '\n',
-                      'input_tags[1]', '\n', input_tags[1])
+            # 由于按长度降序排列的基础上分批，一轮中的
+            # 第1个batch，input_ids, input_mask, input_tags的维度都是torch.Size([64, 50])
+            # 第166个batch，input_ids, input_mask, input_tags的维度都是torch.Size([64, 10])
             input_ids = input_ids.to(args.device)
             input_mask = input_mask.to(args.device)
             input_tags = input_tags.to(args.device)
+            # step为166时，features维度torch.Size([64, 10, 33]) # 该批64个句子，每个句子包含10个词，每个词都有33个分类的值
+            # loss就是一个数值，例如tensor(8.9871, device='cuda:0', grad_fn=<MeanBackward0>) 
+            # loss的计算用到CRF的原理，最终调用的是crf._calculate_loss_old()，详细分析见https://www.jianshu.com/p/566c6faace64
+            # 计算loss的时候，也是要用到真实标签y的，因为设计最小化loss目的是最大化似然概率p(y|X)，这是一个由softmax定义的正确预测在所有预测中的概率
             features, loss = model.forward_loss(input_ids, input_mask, input_lens, input_tags)
+            # 反向传播
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)
+            # 更新参数
             optimizer.step()
             optimizer.zero_grad()
             pbar(step=step, info={'loss': loss.item()})
             train_loss.update(loss.item(), n=1)
         print(" ")
+        # 该epoch各batches的平均loss
         train_log = {'loss': train_loss.avg}
         if 'cuda' in str(args.device):
             torch.cuda.empty_cache()
+        # 在一个epoch的结尾，调用evaluate()进行验证
+        # evaluate() returns result, class_info
+        # result例如{'eval_loss': 22.0380, 'eval_acc': 0.4548, 'eval_recall': 0.3223, 'eval_f1': 0.3772}
+        # class_info例如{'address': {Acc: 0.2897, Recall: 0.1126, F1: 0.1622}, 
+                        # 'position': {Acc: 0.704, Recall: 0.4065, F1: 0.5154},
+                        # ...}
         eval_log, class_info = evaluate(args,model,processor)
         logs = dict(train_log, **eval_log)
         show_info = f'\nEpoch: {epoch} - ' + "-".join([f' {key}: {value:.4f} ' for key, value in logs.items()])
         logger.info(show_info)
+        # 有关lr调整的函数
         scheduler.epoch_step(logs['eval_f1'], epoch)
         if logs['eval_f1'] > best_f1:
             logger.info(f"\nEpoch {epoch}: eval_f1 improved from {best_f1} to {logs['eval_f1']}")
@@ -127,6 +103,7 @@ def train(args,model,processor):
                 model_stat_dict = model.module.state_dict()
             else:
                 model_stat_dict = model.state_dict()
+            # 保存模型
             state = {'epoch': epoch, 'arch': args.arch, 'state_dict': model_stat_dict}
             model_path = args.output_dir / 'best-model.bin'
             torch.save(state, str(model_path))
@@ -136,12 +113,24 @@ def train(args,model,processor):
                 logger.info(info)
 
 def evaluate(args,model,processor):
+    # 对验证集，load_and_cache_examples()返回的是data_processor.py中get_dev_examples()的结果
+    # get_dev_examples()主要是将原始dev.json中的数据转换成[{'id': xx, 
+                                                            # 'context': xx, 
+                                                            # 'tag': xx, (表达成B-xx, I-xx)
+                                                            # 'raw_context': xx}
+                                                            # ...]
+                                                            # 的形式
     eval_dataset = load_and_cache_examples(args,processor, data_type='dev')
+    # eval_dataloader是DatasetLoader类的可迭代对象
+    # args.batch_size即一个batch包含dev.json中的行数，默认为32，可在train.sh里面修改
     eval_dataloader = DatasetLoader(data=eval_dataset, batch_size=args.batch_size,
                                  shuffle=False, seed=args.seed, sort=False,
                                  vocab=processor.vocab, label2id=args.label2id)
+    # 验证过程的进度条，例如[Evaluating] 21/21 [==============================] 840.9ms/step 
     pbar = ProgressBar(n_total=len(eval_dataloader), desc="Evaluating")
+    # 评价指标metric，是SeqEntityScore类对象
     metric = SeqEntityScore(args.id2label,markup=args.markup)
+    # AverageMeter computes and stores the average and current value
     eval_loss = AverageMeter()
     model.eval()
     with torch.no_grad():
@@ -152,12 +141,18 @@ def evaluate(args,model,processor):
             input_tags = input_tags.to(args.device)
             features, loss = model.forward_loss(input_ids, input_mask, input_lens, input_tags)
             eval_loss.update(val=loss.item(), n=input_ids.size(0))
+            # tags是预测标签，_obtain_labels()预测过程用到维特比解码
             tags, _ = model.crf._obtain_labels(features, args.id2label, input_lens)
+            # 真实标签
             input_tags = input_tags.cpu().numpy()
+            # batch size为64的情况下，每一个batch的target是一个包含64个元素的列表，每个元素为一个array，表示该句子的真实标签
+            # target就是input_tags处理了一下后得到的
             target = [input_[:len_] for input_, len_ in zip(input_tags, input_lens)]
+            # 预测标签与真实标签存入metric
             metric.update(pred_paths=tags, label_paths=target)
             pbar(step=step)
     print(" ")
+    # metric.result() returns {'acc': precision, 'recall': recall, 'f1': f1}, class_info
     eval_info, class_info = metric.result()
     eval_info = {f'eval_{key}': value for key, value in eval_info.items()}
     result = {'eval_loss': eval_loss.avg}
@@ -167,6 +162,7 @@ def evaluate(args,model,processor):
 def predict(args,model,processor):
     # model_path = args.output_dir / 'best-model.bin'
     # model = load_model(model, model_path=str(model_path))
+    # 处理测试数据
     test_data = []
     with open(str(args.data_dir / "test.json"), 'r') as f:
         idx = 0
@@ -182,8 +178,11 @@ def predict(args,model,processor):
             json_d['raw_context'] = "".join(words)
             idx += 1
             test_data.append(json_d)
+    # 进度条
     pbar = ProgressBar(n_total=len(test_data))
+    # 所有句子的结果，放在一个大列表results中
     results = []
+    # 测试不分批，直接逐句测试
     for step, line in enumerate(test_data):
         token_a = line['context'].split(" ")
         input_ids = [processor.vocab.to_index(w) for w in token_a]
@@ -200,24 +199,31 @@ def predict(args,model,processor):
             # 即将bilstm层->Norm层结果通过一个nn.Linear(hidden_size * 2,len(label2id))层，得到维度为len(label2id)的分类结果
             features = model.forward_loss(input_ids, input_mask, input_lens, input_tags=None)
             # 得到tags序列中单个字的预测的标签，后续" ".join(tags[0])将其拼接为一整个序列的预测的标签
+            # _obtain_labels函数会调用到_viterbi_decode()
             tags, _ = model.crf._obtain_labels(features, args.id2label, input_lens)
         label_entities = get_entities(tags[0], args.id2label)
         json_d = {}
         json_d['id'] = step
         json_d['tag_seq'] = " ".join(tags[0])
         json_d['entities'] = label_entities
+        # 将当前句子的结果字典json_d加入列表results中
         results.append(json_d)
         pbar(step=step)
     print(" ")
+    # 预测结果文件output_predic_file与提交文件output_submit_file的保存路径
     output_predic_file = str(args.output_dir / "test_prediction.json")
     output_submit_file = str(args.output_dir / "test_submit.json")
+    # 向预测结果文件output_predic_file中写入结果
     with open(output_predic_file, "w") as writer:
         for record in results:
             writer.write(json.dumps(record) + '\n')
+    # 将test.json中每一行都作为一个元素加入列表test_text中
     test_text = []
     with open(str(args.data_dir / 'test.json'), 'r') as fr:
         for line in fr:
             test_text.append(json.loads(line))
+    # 对列表test_text中待预测的句子，与列表results中预测结果进行相应的处理
+    # 得到符合提交格式的结果，放入列表test_submit中，进而存到路径output_submit_file
     test_submit = []
     for x, y in zip(test_text, results):
         json_d = {}
@@ -274,8 +280,7 @@ def main():
     parser.add_argument('--learning_rate',default=0.001,type=float)
     parser.add_argument('--seed',default=1234,type=int)
     parser.add_argument('--gpu',default='0',type=str)
-    # parser.add_argument('--epochs',default=50,type=int)
-    parser.add_argument('--epochs',default=5,type=int)
+    parser.add_argument('--epochs',default=50,type=int)
     parser.add_argument('--batch_size',default=32,type=int)
     parser.add_argument('--embedding_size',default=128,type=int)
     parser.add_argument('--hidden_size',default=384,type=int)
@@ -347,11 +352,11 @@ def main():
         train(args,model,processor)
     if args.do_eval:
         # model_path = args.output_dir / 'best-model.bin'
-        model_path = '/home/user/xiongdengrui/cluener/CLUENER2020/bilstm_crf_pytorch/outputs/20220415170122/best-model.bin'
+        model_path = '/home/user/xiongdengrui/cluener/CLUENER2020/bilstm_crf_pytorch/outputs/20220424162108/best-model.bin'
         model = load_model(model, model_path=str(model_path))
         evaluate(args,model,processor)
     if args.do_predict:
-        model_path = '/home/user/xiongdengrui/cluener/CLUENER2020/bilstm_crf_pytorch/outputs/20220415170122/best-model.bin'
+        model_path = '/home/user/xiongdengrui/cluener/CLUENER2020/bilstm_crf_pytorch/outputs/20220424162108/best-model.bin'
         model = load_model(model, model_path=str(model_path))
         predict(args,model,processor)
     # **************************************************************
